@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} · OpenMailSweep</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">M</span><div><strong>OpenMailSweep</strong><small>local Gmail decision engine</small></div></div>
+    <nav>
+      <a href="/" class="{% if title == 'Dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="/pending" class="{% if title == 'Pending decisions' %}active{% endif %}">Pending <span class="nav-count" id="nav-pending">{{ stats.get('pending',0) }}</span></a>
+      <a href="/queue" class="{% if title == 'Action queue' %}active{% endif %}">Queue</a>
+      <a href="/rules" class="{% if title == 'Learned rules' %}active{% endif %}">Rules <span class="nav-count" id="nav-rules">{{ stats.get('rules',0) }}</span></a>
+    </nav>
+    <div class="worker-pill"><span class="dot {% if paused %}paused{% endif %}"></span><span id="worker-label">{% if paused %}Paused{% else %}Running{% endif %}</span></div>
+  </header>
+  <main class="shell">
+    {% block content %}{% endblock %}
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="{{ url_for('static', path='app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

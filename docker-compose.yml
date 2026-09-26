@@ -1,0 +1,14 @@
+services:
+  sweeper:
+    build:
+      context: .
+    env_file: .env
+    volumes:
+      - ./secrets:/app/secrets
+      - ./data:/app/data
+      - ./policy.yaml:/app/policy.yaml:ro
+    ports:
+      - "127.0.0.1:${UI_PORT:-8787}:${UI_PORT:-8787}"
+      - "127.0.0.1:${OAUTH_PORT:-8765}:${OAUTH_PORT:-8765}"
+    command: ["serve"]
+    restart: unless-stopped

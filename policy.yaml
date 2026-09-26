@@ -1,0 +1,84 @@
+classification:
+  auto_junk_confidence: 0.985
+  review_confidence: 0.80
+  max_body_chars: 1200
+  contradiction_spam_threshold: 0.90
+  contradiction_useful_threshold: 0.70
+  contradiction_importance_threshold: 2.0
+  auto_bulk_probability: 0.90
+  career_subject_terms:
+    - job alert
+    - job alerts
+    - job recommendations
+    - jobs you may be interested in
+    - new jobs for
+    - roles matching
+    - career opportunities
+
+protected:
+  sender_domains: []
+  sender_addresses: []
+  official_domain_suffixes:
+    - gov.uk
+    - nhs.uk
+    - police.uk
+  subject_terms:
+    - password
+    - verification code
+    - security alert
+    - suspicious sign-in
+    - invoice
+    - receipt
+    - statement
+    - payment
+    - tax
+    - payroll
+    - payslip
+    - contract
+    - legal
+  transactional_subject_terms:
+    - order confirmation
+    - booking confirmation
+    - reservation confirmation
+    - appointment confirmation
+    - payment confirmation
+    - payment received
+    - refund
+    - charged
+    - charging at
+    - thanks for charging
+    - delivered
+    - delivery update
+    - out for delivery
+    - dispatched
+    - shipped
+    - tracking number
+    - account activity
+    - account data
+    - review your details
+    - policy evidence
+    - case reference
+    - application reference
+    - planning advice
+    - planning application
+    - performance report
+  # Soft safety signals: block automatic cleanup but still allow classification.
+  protect_gmail_personal: true
+  protect_prior_correspondents: true
+
+unsubscribe:
+  auto_one_click: true
+  auto_mailto: true
+  require_dkim: true
+  request_timeout_seconds: 10.0
+  trash_if_unavailable: true
+  trash_on_failure: false
+
+labels:
+  junk: OpenMailSweep/Junk
+  promotion: OpenMailSweep/Promotion
+  newsletter: OpenMailSweep/Newsletter
+  review: OpenMailSweep/Review
+  protected: OpenMailSweep/Protected
+  read_later: Read Later
+  unsubscribe_review: OpenMailSweep/UnsubscribeReview

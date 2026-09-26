@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><div><p class="eyebrow">EXECUTION</p><h1>Action queue</h1><p>This screen includes the awaiting-classification backlog, messages currently being classified, actionable work, failures, and completed actions. Intake/classification/execution run independently.</p></div></section>
+<div id="queue-sections"><p class="muted">Loading queue…</p></div>
+{% endblock %}
+{% block scripts %}<script>startQueueScreen();</script>{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">CONTINUOUS SWEEP + LEARN</p>
+    <h1>Your inbox keeps moving.<br>OpenMailSweep learns as you decide.</h1>
+    <p class="lede">{% if mail_provider == 'yahoo' %}Yahoo{% else %}Gmail{% endif %} intake streams through the whole matching mailbox in batches with no message-count cap. Local classification runs in milliseconds and independently of intake, so Pending keeps accumulating and the UI remains live.</p>
+  </div>
+  <div class="hero-actions">
+    <button class="button primary" onclick="scanNow()">Scan now</button>
+    {% if paused %}<button class="button" onclick="resumeWorker()">Resume intake</button>{% else %}<button class="button" onclick="pauseWorker()">Pause intake</button>{% endif %}
+  </div>
+</section>
+
+<section class="stat-grid" id="stats-grid">
+  <a class="stat-card attention" href="/pending"><span>Pending decisions</span><strong id="stat-pending">{{ stats.get('pending',0) }}</strong><small>waiting for you; intake continues</small></a>
+  <a class="stat-card" href="/queue"><span>Awaiting local classification</span><strong id="stat-discovered">{{ stats.get('discovered',0) }}</strong><small>no learned rule matched yet</small></a>
+  <a class="stat-card" href="/queue"><span>Classifying now</span><strong id="stat-classifying">{{ stats.get('classifying',0) }}</strong><small>fast local model, independent of intake</small></a>
+  <a class="stat-card" href="/queue"><span>Actionable</span><strong id="stat-actionable">{{ stats.get('actionable',0) }}</strong><small>queued for execution</small></a>
+  <a class="stat-card" href="/rules"><span>Learned rules</span><strong id="stat-rules">{{ stats.get('rules',0) }}</strong><small>future decisions become instant</small></a>
+</section>
+
+{% set lcls = (worker.get('local_classifier') or {}) %}
+<section class="panel live-panel">
+  <div class="panel-head">
+    <div><p class="eyebrow">LOCAL CLASSIFIER</p><h2>Fast personalised model</h2></div>
+    <div class="live-state"><span class="live-dot"></span><strong>{{ lcls.get('device', 'cpu') | upper }} · {{ lcls.get('maturity', 'cold-start') }}</strong></div>
+  </div>
+  <div class="intake-metrics">
+    <div><span>Status</span><strong>{{ lcls.get('status', 'bootstrap') }}</strong><small>bootstrap: {{ worker.get('local_bootstrap') or 'pending' }}</small></div>
+    <div><span>Training examples</span><strong>{{ lcls.get('examples', 0) }}</strong><small>confirmed decisions only</small></div>
+    <div><span>Prediction latency</span><strong>{{ lcls.get('latency_ema_ms', '—') }} ms</strong><small>rolling average</small></div>
+    <div><span>High-confidence accuracy</span><strong>{% if lcls.get('metrics', {}).get('high_confidence_accuracy') is not none %}{{ '%.1f' % ((lcls.get('metrics', {})['high_confidence_accuracy'] * 100)|round(1)) }}%{% else %}—{% endif %}</strong><small>holdout evaluation</small></div>
+    <div><span>Auto-routed / Pending</span><strong>{{ lcls.get('auto_actioned', 0) }} / {{ lcls.get('pending', 0) }}</strong><small>corrections: {{ lcls.get('corrections', 0) }}</small></div>
+    <div><span>Next retrain</span><strong>after {{ lcls.get('retrain_new_remaining', '—') }} examples</strong><small>or every {{ lcls.get('retrain_interval_hours', 6) }} h; last: {{ lcls.get('trained_at') or '—' }}</small></div>
+    <div><span>Backend</span><strong>{{ lcls.get('backend', '—') }}</strong><small>fully local</small></div>
+    {% if lcls.get('last_error') %}<div><span>Last model error</span><strong class="error-row">retrain failed; previous kept</strong><small>{{ lcls['last_error'][:120] }}</small></div>{% endif %}
+  </div>
+  <p class="muted compact">The model trains on <strong>what each email is</strong> (subject, body signals, structure, Gmail categories) — never on who it is from; per-sender identity is handled by the learned-rule table. {{ lcls.get('examples', 0) }} confirmed example(s); auto-actioning requires {{ lcls.get('auto_action_min_examples', 100) }}.</p>
+</section>
+
+<section class="panel live-panel">
+  <div class="panel-head">
+    <div><p class="eyebrow">LIVE INTAKE</p><h2>Streaming {% if mail_provider == 'yahoo' %}Yahoo{% else %}Gmail{% endif %} batches</h2></div>
+    <div class="live-state"><span class="live-dot" id="live-dot"></span><strong id="scan-phase">{{ worker.get('scanner','starting') }}</strong></div>
+  </div>
+  <div class="activity-track" aria-hidden="true"><span id="activity-bar" class="activity-bar active"></span></div>
+  <div class="live-current"><span>Current</span><strong id="scan-current">{{ worker.get('scanner_current_subject') or 'Starting…' }}</strong><small id="progress-age">Live status</small></div>
+  <div class="intake-metrics">
+    <div><span>Provider batch</span><strong id="scan-page">{{ worker.get('scan_page',0) }}</strong><small>{{ fetch_batch_size }} IDs per provider page</small></div>
+    <div><span>IDs seen this pass</span><strong id="scan-seen">{{ worker.get('scan_seen',0) }}</strong><small id="scan-estimate">{% if worker.get('scan_estimate') %}~{{ worker.get('scan_estimate') }} matching{% else %}total not known yet{% endif %}</small></div>
+    <div><span>New messages</span><strong id="scan-new">{{ worker.get('scan_new',0) }}</strong><small>newly discovered this pass</small></div>
+    <div><span>Already known</span><strong id="scan-known">{{ worker.get('scan_known',0) }}</strong><small>skipped without reclassification</small></div>
+    <div><span>Queued for classifier</span><strong id="scan-discovered">{{ worker.get('scan_discovered',0) }}</strong><small>unknown after safety + learned rules</small></div>
+    <div><span>Rule matched</span><strong id="scan-rule-matched">{{ worker.get('scan_rule_matched',0) }}</strong><small>routed without the model</small></div>
+  </div>
+  <p class="muted compact">OpenMailSweep keeps paging until Gmail returns no more messages for <code>{{ scan_query }}</code>. The batch size limits only one Gmail API request; it does <strong>not</strong> limit the total number of messages fetched. Provider calls are automatically paced (Gmail through a conservative weighted quota budget), so a large inbox can keep streaming without hammering the API.</p>
+</section>
+
+<section class="two-col">
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">WORKERS</p><h2>Live status</h2></div></div>
+    <dl class="status-list">
+      <div><dt>Gmail intake</dt><dd id="scanner-status">{{ worker.get('scanner','starting') }}</dd></div>
+      <div><dt>Classifier</dt><dd id="classifier-status">{{ worker.get('classifier','starting') }}</dd></div>
+      <div><dt>Action executor</dt><dd id="executor-status">{{ worker.get('executor','starting') }}</dd></div>
+      <div><dt>Action workers</dt><dd><span id="executor-active">{{ worker.get('executor_active',0) }}</span> active / <span id="executor-workers">{{ worker.get('executor_workers', action_workers) }}</span></dd></div>
+      <div><dt>Gmail API</dt><dd id="gmail-api-status">{{ worker.get('gmail_api_state','ready') }}</dd></div>
+      <div><dt>Gmail API budget</dt><dd><span id="gmail-api-budget">{{ worker.get('gmail_api_units_per_minute') or '—' }}</span> units/min</dd></div>
+      <div><dt>Quota pacing</dt><dd id="gmail-api-detail">{{ worker.get('gmail_api_detail') or 'Ready' }}</dd></div>
+      <div><dt>Classifier work</dt><dd id="classifier-current">{{ worker.get('classifier_current_subject') or '—' }}</dd></div>
+      <div><dt>Last completed pass</dt><dd id="last-scan">{{ worker.get('last_scan_completed') or 'Not completed yet' }}</dd></div>
+      <div><dt>Scan query</dt><dd><code>{{ scan_query }}</code></dd></div>
+      <div><dt>Fetch batch size</dt><dd>{{ fetch_batch_size }} IDs</dd></div>
+      <div><dt>Pass interval</dt><dd>{{ scan_interval|int }} seconds after reaching the end</dd></div>
+      {% if worker.get('last_scan_error') %}<div class="error-row"><dt>Last error</dt><dd id="last-scan-error">{{ worker.get('last_scan_error') }}</dd></div>{% endif %}
+    </dl>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">PIPELINE</p><h2>Independent stages</h2></div></div>
+    <div class="flow">
+      <span>Gmail batches</span><b>→</b><span>hard safety</span><b>→</b><span>learned rules</span><b>→</b><span>unknown-only queue</span><b>→</b><span>local classifier</span><b>→</b><span>Pending / action</span>
+    </div>
+    <p class="muted">Intake does not wait for classification. The local model runs in milliseconds; learned-rule mail routes directly to the action queue. The action queue is drained by a configurable concurrent worker pool, while one shared Gmail quota controller keeps aggregate API usage safe. Pending decisions also keep accumulating while you work through the oldest question.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">RECENT</p><h2>Completed activity</h2></div><a href="/queue">View full queue →</a></div>
+  <div class="table-wrap"><table><thead><tr><th>Message</th><th>Final action</th><th>Source</th><th>Completed</th></tr></thead><tbody>
+    {% for item in recent %}<tr><td><strong>{{ item.subject or '(no subject)' }}</strong><small>{{ item.sender }}</small></td><td><span class="badge {{ item.final_action or item.status }}">{{ (item.final_action or item.status)|replace('_', ' ')|title }}</span></td><td>{{ item.decision_source or '—' }}</td><td>{{ item.completed_at or item.updated_at }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No completed actions yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
+{% block scripts %}<script>startDashboardPolling();</script>{% endblock %}

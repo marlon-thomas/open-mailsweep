@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+secrets/
+data/
+models/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite3
+*.db
+tests/
+*.zip

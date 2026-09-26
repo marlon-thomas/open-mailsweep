@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><div><p class="eyebrow">MEMORY</p><h1>Learned rules</h1><p>Change a choice whenever you want. The new action applies to future messages and any matching mail not yet processed. Completed actions are not automatically reversed.</p></div><div class="queue-counter"><strong>{{ rules|length }}</strong><span>rules</span></div></section>
+<section class="panel">
+  <div class="table-wrap"><table><thead><tr><th>Scope</th><th>Value</th><th>Action</th><th>Updated</th><th></th></tr></thead><tbody>
+  {% for rule in rules %}
+    <tr id="rule-{{ rule.id }}">
+      <td><span class="badge">{{ rule.scope_type }}</span></td>
+      <td class="mono">{{ rule.scope_value }}</td>
+      <td><select class="rule-action" data-rule="{{ rule.id }}" data-original="{{ rule.action }}"><option value="keep" {% if rule.action=='keep' %}selected{% endif %}>Keep</option><option value="read_later" {% if rule.action=='read_later' %}selected{% endif %}>Read Later</option><option value="archive" {% if rule.action=='archive' %}selected{% endif %}>Archive</option><option value="trash" {% if rule.action=='trash' %}selected{% endif %}>Clean / Trash</option><option value="unsubscribe_trash" {% if rule.action=='unsubscribe_trash' %}selected{% endif %}>Unsubscribe + Clean</option></select></td>
+      <td>{{ rule.updated_at }}</td>
+      <td class="actions"><button class="button small" onclick="saveRule({{ rule.id }})">Save</button><button class="button small danger" onclick="deleteRule({{ rule.id }})">Delete</button></td>
+    </tr>
+  {% else %}<tr><td colspan="5" class="empty">No learned rules yet. Answer a Pending question to teach OpenMailSweep.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="panel"><div class="panel-head"><div><p class="eyebrow">HISTORY</p><h2>Recent rule changes</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>When</th><th>Scope</th><th>Changed</th><th>Note</th></tr></thead><tbody>
+  {% for h in history %}<tr><td>{{ h.changed_at }}</td><td>{{ h.scope_type }} · <span class="mono">{{ h.scope_value }}</span></td><td>{{ h.old_action or '—' }} → {{ h.new_action or 'deleted' }}</td><td>{{ h.note }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No rule changes yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

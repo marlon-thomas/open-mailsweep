@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <div><p class="eyebrow">HUMAN-IN-THE-LOOP</p><h1>Pending decisions</h1><p>The queue keeps accumulating while you answer. Once you decide, this card disappears and the next oldest question floats to the top.</p></div>
+  <div class="queue-counter"><strong id="pending-count">{{ stats.get('pending',0) }}</strong><span>pending</span></div>
+</section>
+
+<div id="pending-empty" class="panel empty-state hidden"><div class="empty-icon">✓</div><h2>Nothing needs your attention</h2><p>OpenMailSweep will keep scanning in the background. New uncertain messages will appear here automatically.</p></div>
+
+<section id="pending-card" class="decision-card hidden">
+  <div class="decision-meta"><span class="badge" id="pending-category">unknown</span><span id="pending-position"></span><a id="gmail-link" target="_blank" rel="noreferrer">Open in Gmail ↗</a></div>
+  <h2 id="pending-subject"></h2>
+  <p class="sender" id="pending-sender"></p>
+  <p class="snippet" id="pending-snippet"></p>
+  <div class="question"><strong id="pending-question"></strong><p id="pending-reason"></p><p id="pending-suggestion" class="muted compact"></p></div>
+  <div class="signal-row" id="pending-signals"></div>
+  <div class="model-grid" id="model-grid"></div>
+
+  <div class="scope-row">
+    <label for="scope-select">Remember this choice for</label>
+    <select id="scope-select"></select>
+    <small id="scope-help">A mailing-list rule is usually safest for newsletters.</small>
+  </div>
+
+  <div class="decision-actions">
+    <button class="choice keep" data-action="keep">Keep in inbox<span>future matching mail stays</span></button>
+    <button class="choice read-later" data-action="read_later">Read Later<span>label it Read Later and remove it from Inbox</span></button>
+    <button class="choice archive" data-action="archive">Archive<span>remove from inbox, keep in Gmail</span></button>
+    <button class="choice trash" data-action="trash">Clean<span>move matching mail to Trash</span></button>
+    <button class="choice unsubscribe" data-action="unsubscribe_trash" id="unsubscribe-choice">Unsubscribe + clean<span>OpenMailSweep chooses the safest method, then Trash</span></button>
+  </div>
+  <div class="warning" id="unsubscribe-warning">Unsubscribe is an external action and generally cannot be undone.</div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><p class="eyebrow">NEXT UP</p><h2>Waiting behind this question</h2></div><span class="muted">Oldest first</span></div>
+  <div id="upcoming-list" class="upcoming-list"><p class="empty">Loading…</p></div>
+</section>
+{% endblock %}
+{% block scripts %}<script>startPendingScreen();</script>{% endblock %}

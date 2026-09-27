@@ -37,7 +37,7 @@ A hashed linear model (word + character n-grams, log-loss SGD, scikit-learn). Pr
 
 Sensible defaults for everything; the annotated [`.env.example`](.env.example) covers thresholds, retrain cadence, scan query/interval, action-worker pool, and Gmail quota pacing (`GMAIL_QUOTA_UNITS_PER_MINUTE=3600` default, weighted and shared by all workers).
 
-## Legacy CLI
+## CLI & batch mode
 
 ```bash
 openmailsweep audit  --query "in:inbox newer_than:30d" --limit 50   # read-only review

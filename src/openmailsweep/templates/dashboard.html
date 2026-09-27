@@ -24,15 +24,15 @@
 <section class="panel live-panel">
   <div class="panel-head">
     <div><p class="eyebrow">LOCAL CLASSIFIER</p><h2>Fast personalised model</h2></div>
-    <div class="live-state"><span class="live-dot"></span><strong>{{ lcls.get('device', 'cpu') | upper }} · {{ lcls.get('maturity', 'cold-start') }}</strong></div>
+    <div class="live-state"><span class="live-dot"></span><strong id="lc-device-maturity">{{ lcls.get('device', 'cpu') | upper }} · {{ lcls.get('maturity', 'cold-start') }}</strong></div>
   </div>
   <div class="intake-metrics">
-    <div><span>Status</span><strong>{{ lcls.get('status', 'bootstrap') }}</strong><small>bootstrap: {{ worker.get('local_bootstrap') or 'pending' }}</small></div>
-    <div><span>Training examples</span><strong>{{ lcls.get('examples', 0) }}</strong><small>confirmed decisions only</small></div>
-    <div><span>Prediction latency</span><strong>{{ lcls.get('latency_ema_ms', '—') }} ms</strong><small>rolling average</small></div>
-    <div><span>High-confidence accuracy</span><strong>{% if lcls.get('metrics', {}).get('high_confidence_accuracy') is not none %}{{ '%.1f' % ((lcls.get('metrics', {})['high_confidence_accuracy'] * 100)|round(1)) }}%{% else %}—{% endif %}</strong><small>holdout evaluation</small></div>
-    <div><span>Auto-routed / Pending</span><strong>{{ lcls.get('auto_actioned', 0) }} / {{ lcls.get('pending', 0) }}</strong><small>corrections: {{ lcls.get('corrections', 0) }}</small></div>
-    <div><span>Next retrain</span><strong>after {{ lcls.get('retrain_new_remaining', '—') }} examples</strong><small>or every {{ lcls.get('retrain_interval_hours', 6) }} h; last: {{ lcls.get('trained_at') or '—' }}</small></div>
+    <div><span>Status</span><strong id="lc-status">{{ lcls.get('status', 'bootstrap') }}</strong><small>bootstrap: {{ worker.get('local_bootstrap') or 'pending' }}</small></div>
+    <div><span>Training examples</span><strong id="lc-examples">{{ lcls.get('examples', 0) }}</strong><small>confirmed decisions only</small></div>
+    <div><span>Prediction latency</span><strong id="lc-latency">{{ lcls.get('latency_ema_ms', '—') }} ms</strong><small>rolling average</small></div>
+    <div><span>High-confidence accuracy</span><strong id="lc-accuracy">{% if lcls.get('metrics', {}).get('high_confidence_accuracy') is not none %}{{ '%.1f' % (lcls.get('metrics', {})['high_confidence_accuracy'] * 100) }}%{% elif lcls.get('metrics', {}).get('holdout') %}0% coverage{% else %}—{% endif %}</strong><small id="lc-accuracy-note">holdout evaluation</small></div>
+    <div><span>Auto-routed / Pending</span><strong id="lc-auto-pending">{{ lcls.get('auto_actioned', 0) }} / {{ lcls.get('pending', 0) }}</strong><small id="lc-corrections">corrections: {{ lcls.get('corrections', 0) }}</small></div>
+    <div><span>Next retrain</span><strong id="lc-retrain">{% if lcls.get('retrain_new_remaining', 1) <= 0 %}due now{% else %}after {{ lcls['retrain_new_remaining'] }} examples{% endif %}</strong><small id="lc-retrain-note">or every {{ lcls.get('retrain_interval_hours', 6) }} h; last: {{ lcls.get('trained_at') or '—' }}</small></div>
     <div><span>Backend</span><strong>{{ lcls.get('backend', '—') }}</strong><small>fully local</small></div>
     {% if lcls.get('last_error') %}<div><span>Last model error</span><strong class="error-row">retrain failed; previous kept</strong><small>{{ lcls['last_error'][:120] }}</small></div>{% endif %}
   </div>

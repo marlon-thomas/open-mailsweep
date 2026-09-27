@@ -33,6 +33,18 @@ function updateDashboard(d){
   const bar=$('activity-bar');if(bar)bar.classList.toggle('active',workerActive(w));
   const dot=$('live-dot');if(dot)dot.classList.toggle('idle',!workerActive(w));
   const label=$('worker-label');if(label)label.textContent=d.paused?'Intake paused':'Running';
+  const lc=w.local_classifier;if(lc){
+    setText('lc-device-maturity',`${lc.device||'cpu'} · ${lc.maturity||'cold-start'}`.toUpperCase());
+    setText('lc-status',lc.status||'bootstrap');setText('lc-examples',lc.examples||0);
+    setText('lc-latency',(lc.latency_ema_ms==null?'—':lc.latency_ema_ms)+' ms');
+    const m=lc.metrics||{};
+    setText('lc-accuracy',m.high_confidence_accuracy!=null?`${(m.high_confidence_accuracy*100).toFixed(1)}%`:(m.holdout?'0% coverage':'—'));
+    setText('lc-accuracy-note',m.holdout?`holdout coverage ${m.high_confidence_coverage!=null?(m.high_confidence_coverage*100).toFixed(0)+'%':'—'} · accuracy ${m.accuracy!=null?(m.accuracy*100).toFixed(1)+'%':'—'}`:'holdout evaluation');
+    setText('lc-auto-pending',`${lc.auto_actioned||0} / ${lc.pending||0}`);
+    setText('lc-corrections',`corrections: ${lc.corrections||0}`);
+    setText('lc-retrain',(lc.retrain_new_remaining!=null&&lc.retrain_new_remaining<=0)?'due now':`after ${lc.retrain_new_remaining??'—'} examples`);
+    setText('lc-retrain-note',`or every ${lc.retrain_interval_hours||6} h; last: ${lc.trained_at||'—'}`);
+  }
 }
 function startDashboardPolling(){poll(async()=>{try{updateDashboard(await api('/api/stats'));}catch(e){setText('scan-current',`Status temporarily unavailable: ${e.message}`);}},1200);}
 

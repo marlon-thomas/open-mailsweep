@@ -391,6 +391,14 @@ class OpenMailSweepService:
             )
             examples = self._dataset_examples(training)
             state = local.bootstrap(examples, revision)
+            try:
+                saved = json.loads(self.store.get_app_state("local_counters", "{}"))
+                if isinstance(saved, dict):
+                    for key in local.counters:
+                        if key in saved:
+                            local.counters[key] = int(saved[key])
+            except Exception:
+                pass
             self.training = training
             self.local = local
             self.status.update(
@@ -588,7 +596,15 @@ class OpenMailSweepService:
             self._local_pending(candidate, prediction, gate)
 
         if self.local is not None:
+            self._persist_local_counters()
             self.status.update(local_classifier=self.local.public_state(), last_progress_at=_now())
+
+    def _persist_local_counters(self) -> None:
+        if self.local is not None:
+            try:
+                self.store.set_app_state("local_counters", json.dumps(self.local.counters))
+            except Exception:
+                pass
 
     def _local_pending(self, candidate: ClassifyCandidate, prediction: Prediction | None, gate: Any) -> None:
         classification = self._local_classification(prediction) if prediction else None

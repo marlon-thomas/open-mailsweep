@@ -377,7 +377,7 @@ class LocalClassifier:
         self.last_error: str | None = None
         self.predictions = 0
         self._latency_ema_ms = 0.0
-        self.counters = {"auto_actioned": 0, "pending": 0, "corrections": 0}
+        self.counters = {"auto_actioned": 0, "pending": 0, "corrections": 0, "reeval_released": 0}
 
     @staticmethod
     def _make_vectorizer():
@@ -481,6 +481,11 @@ class LocalClassifier:
 
     def stale_revision(self) -> str | None:
         return self.meta.get("data_revision")
+
+    def current_thresholds(self) -> dict[str, float]:
+        """Public view of the effective (configured + calibrated) gates."""
+        with self._lock:
+            return dict(self._thresholds())
 
     def is_stale(self, data_revision: str) -> bool:
         return bool(self.meta) and self.meta.get("data_revision") != data_revision
@@ -908,6 +913,7 @@ class LocalClassifier:
                 "auto_actioned": self.counters["auto_actioned"],
                 "pending": self.counters["pending"],
                 "corrections": self.counters["corrections"],
+                "reeval_released": self.counters.get("reeval_released", 0),
                 "last_error": self.last_error,
                 "retrain_requested": self.retrain_requested,
             }

@@ -235,3 +235,102 @@ def test_failed_periodic_retrain_keeps_previous_model(tmp_path: Path):
     service.store.claim_discovered_batch(16)
     service._classify_claimed_locally([ClassifyCandidate(item_id, fresh, [], plan())])
     assert service.store.get_item(item_id)["status"] in {"actionable", "pending"}
+
+def _make_pending(service, msg, safety_signals=None):
+    unsub = UnsubscribePlan(
+        method="one_click", one_click=True, one_click_auto_eligible=True,
+        auto_eligible=True, reason="ok",
+    )
+    item_id = service.store.add_discovered(msg, unsub)
+    service.store.claim_discovered_batch(16)
+    service.store.mark_pending(
+        item_id, None, reason="below gate", question="q", proposed_action=None,
+        safety_signals=safety_signals or [],
+    )
+    return item_id
+
+
+def test_pending_reeval_released_items_rechecked_by_executor(tmp_path: Path):
+    """Items released via local-classifier-reeval must pass the deferred hard
+    safety re-check before any Gmail mutation (they may have waited days and
+    acquired replies/star flags meanwhile)."""
+    service = make_service(tmp_path)
+    train_from_senders(service)
+    msg = promo_msg("z-exec", "sales@unseen-exec.co.uk", "unseen-exec.co.uk")
+    item_id = service.store.add_discovered(msg, plan())
+
+    class BlockedGmail:
+        def __init__(self):
+            self.trashed = []
+        def get_message_metadata(self, mid):
+            return msg
+        def thread_has_sent_message(self, tid):
+            return True  # the user replied after the message went Pending
+        def trash(self, mid):
+            self.trashed.append(mid)
+
+    gmail = BlockedGmail()
+    service.store.set_actionable(item_id, "trash", source="local-classifier-reeval", reason="test")
+    claimed = service.store.claim_next_action()
+    service._execute_action(claimed, gmail, worker_id=1)
+
+    item = service.store.get_item(item_id)
+    assert item["status"] == "done" and item["final_action"] == "protected"
+    assert "thread-has-sent-reply" in (item["protected_reason"] or "")
+    assert gmail.trashed == []
+
+
+def test_pending_reeval_calibrated_release_and_signal_brake(tmp_path: Path):
+    """After a calibrated retrain lowers the gate: identical content releases
+    from Pending, while stored safety signals keep theirs blocked."""
+    from test_local_classifier import big_training_set
+
+    service = make_service(tmp_path)
+    train_from_senders(service)
+    for ex in big_training_set():
+        service.training.upsert_example(
+            message_id=ex.message_id, label=ex.label, sender=ex.sender,
+            sender_address=ex.sender_address, subject=ex.subject,
+            snippet=ex.snippet, list_id=ex.list_id, features=ex.features,
+            source="pending-answer",
+        )
+    service.local.full_retrain(service._dataset_examples(service.training), "rev-x", "test")
+    assert service.local.current_thresholds()["unsubscribe_trash"] < 0.98 or \
+           service.local.current_thresholds()["trash"] < 0.95
+
+    clean = promo_msg("z-clean", "bulk@calibrated-sender.com", "calibrated-sender.com")
+    clean_id = _make_pending(service, clean)
+    signalled = promo_msg("z-sig", "bulk2@calibrated-sender.com", "calibrated-sender.com")
+    signalled_id = _make_pending(service, signalled, safety_signals=["prior-correspondent"])
+
+    service._reeval_pending_sweep("test")
+
+    released = service.store.get_item(clean_id)
+    assert released["status"] == "actionable"
+    assert released["decision_source"] == "local-classifier-reeval"
+    assert service.store.get_item(signalled_id)["status"] == "pending"
+    assert service.local.counters["reeval_released"] >= 1
+
+
+def test_pending_reeval_survives_restart_via_startup_trigger(tmp_path: Path):
+    """Sweep is wired into _bootstrap_local_classifier, so a fresh process
+    re-scores Pending with the loaded model (trigger: startup)."""
+    service = make_service(tmp_path)
+    train_from_senders(service)
+    msg = promo_msg("z-boot", "new@boot-seen.co.uk", "boot-seen.co.uk")
+    item_id = _make_pending(service, msg)
+
+    # Second "process": new service over the same persisted files.
+    from openmailsweep.audit import AuditLog
+    from openmailsweep.state_store import StateStore
+    service2 = OpenMailSweepService(
+        service.settings, Policy(), StateStore(tmp_path / "state.db"), AuditLog(tmp_path / "audit.db")
+    )
+    service2._bootstrap_local_classifier()
+    assert service2.local is not None and service2.local.bootstrapped
+    # The startup sweep ran inside bootstrap and released the item under this
+    # fixture's deliberately low 0.55 test gate.
+    item = service2.store.get_item(item_id)
+    assert item["status"] == "actionable"
+    assert item["decision_source"] == "local-classifier-reeval"
+    assert "startup" in (item["decision_reason"] or "")

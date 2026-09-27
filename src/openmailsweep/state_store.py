@@ -657,6 +657,14 @@ class StateStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def list_all_pending(self) -> list[dict[str, Any]]:
+        """Every unanswered Pending row, oldest first (classifier re-score sweep)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM queue_items WHERE status='pending' ORDER BY id ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def list_queue(self, statuses: tuple[str, ...], limit: int = 100) -> list[dict[str, Any]]:
         if not statuses:
             return []

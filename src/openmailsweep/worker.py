@@ -407,6 +407,7 @@ class OpenMailSweepService:
                 local_classifier=local.public_state(),
                 last_progress_at=_now(),
             )
+            self._reeval_pending_sweep("startup")
         except Exception as exc:
             self.report(f"[classifier-local] bootstrap FAILED; unknowns stay queued: {exc}")
             self.status.update(classifier="idle", last_progress_at=_now())
@@ -441,11 +442,109 @@ class OpenMailSweepService:
         try:
             self._resync_dataset()
             examples = self._dataset_examples(self.training)
+            thresholds_before = self.local.current_thresholds()
             ok = self.local.full_retrain(examples, self.store.data_revision(), reason)
             if ok:
                 self.local.reset_incremental_counter_after_full()
+                if self.local.current_thresholds() != thresholds_before:
+                    self._reeval_pending_sweep(f"threshold update after retrain ({reason})")
         except Exception as exc:
             self.report(f"[classifier-local] periodic retrain error: {exc}")
+        self.status.update(local_classifier=self.local.public_state(), last_progress_at=_now())
+
+    @staticmethod
+    def _mixed_history(history: dict[str, int]) -> bool:
+        labels = {
+            key.split("hist_sender_", 1)[-1].split("hist_list_", 1)[-1]
+            for key, count in (history or {}).items()
+            if count > 0
+        }
+        return len(labels) > 1
+
+    def _reeval_pending_sweep(self, trigger: str) -> None:
+        """Re-run the classifier over every unanswered Pending item.
+
+        Runs on the classifier thread at startup and whenever a retrain changes
+        the effective gates: a threshold calibrated *after* a message went
+        Pending should release the messages that the new evidence now clears.
+        Pure CPU/DB work (no Gmail calls) - the action executor re-verifies
+        hard protection before mutating anything, because these items may have
+        waited long enough for replies or star flags to appear.
+        """
+        if (
+            self.local is None
+            or self.training is None
+            or not self.local.bootstrapped
+            or self.local.example_count == 0
+        ):
+            return
+        rows = self.store.list_all_pending()
+        if not rows:
+            return
+        from .models import UnsubscribePlan
+
+        started = time.perf_counter()
+        released = 0
+        for index, row in enumerate(rows):
+            if self.stop_event.is_set():
+                break
+            if index and index % 200 == 0:
+                self.status.update(last_progress_at=_now())
+            try:
+                features = json.loads(row.get("features_json") or "{}")
+            except Exception:
+                features = {}
+            features["body_excerpt"] = row.get("body_excerpt") or features.get("body_excerpt") or ""
+            try:
+                signals = json.loads(row.get("safety_signals_json") or "[]")
+            except Exception:
+                signals = []
+            history = self.training.history_for(
+                sender_address=row.get("sender_address") or "",
+                list_id=row.get("list_id") or "",
+                exclude_message_id=row.get("message_id") or "",
+            )
+            example = TrainingExample(
+                message_id=row["message_id"],
+                label="",
+                sender=row.get("sender") or "",
+                sender_address=row.get("sender_address") or "",
+                subject=row.get("subject") or "",
+                snippet=row.get("snippet") or "",
+                list_id=row.get("list_id") or "",
+                features=features,
+                history=history,
+            )
+            prediction = self.local.predict(example)
+            plan = UnsubscribePlan(
+                method=str(row.get("unsubscribe_method") or "none"),
+                one_click=bool(features.get("one_click")),
+                one_click_auto_eligible=bool(features.get("one_click")),
+                auto_eligible=bool(row.get("unsubscribe_auto_eligible")),
+                reason="stored",
+            )
+            gate = self.local.gate(
+                prediction,
+                plan=plan,
+                safety_signals=[s for s in signals if isinstance(s, str)],
+                mixed_history=self._mixed_history(history),
+            )
+            if gate.mode == "actionable" and gate.action:
+                self.store.set_actionable(
+                    int(row["id"]),
+                    gate.action,
+                    source="local-classifier-reeval",
+                    reason=f"re-scored after {trigger}: {gate.reason}",
+                )
+                released += 1
+        if released:
+            self.local.counters["reeval_released"] = int(self.local.counters.get("reeval_released", 0)) + released
+            self.action_wake.release()
+        self._persist_local_counters()
+        self.report(
+            f"[classifier-local] pending re-score ({trigger}): scanned={len(rows)}"
+            f" released={released} duration={time.perf_counter() - started:.1f}s"
+        )
         self.status.update(local_classifier=self.local.public_state(), last_progress_at=_now())
 
     def _classifier_example(self, msg: EmailMessage, plan: Any) -> Any:
@@ -554,12 +653,7 @@ class OpenMailSweepService:
             # Sender/list history is NOT a model feature (identity memorising is
             # the rules table's job). It is only consulted as a brake: a source
             # with genuinely mixed previous decisions is never auto-cleaned.
-            history_labels = {
-                key.split("hist_sender_", 1)[-1].split("hist_list_", 1)[-1]
-                for key, count in (example.history or {}).items()
-                if count > 0
-            }
-            mixed_history = len(history_labels) > 1
+            mixed_history = self._mixed_history(example.history)
             prediction = self.local.predict(example)
             gate = self.local.gate(
                 prediction,
@@ -1183,7 +1277,7 @@ class OpenMailSweepService:
         # Learned rules bypass the classifier entirely, but never hard safety.
         # Re-fetch lightweight metadata and check whether the user has replied in
         # the thread before applying archive/read-later/trash/unsubscribe rules.
-        if item.get("decision_source") == "learned-rule":
+        if item.get("decision_source") in {"learned-rule", "local-classifier-reeval"}:
             action_message = gmail.get_message_metadata(message_id)
             protected_reason = self.safety.protect_reason(action_message)
             if protected_reason is None:

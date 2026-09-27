@@ -53,6 +53,16 @@ def _public_item(item: dict) -> dict:
     return value
 
 
+def _static_version() -> str:
+    """Cache-buster for static assets so browsers pick up UI changes."""
+    from . import __version__
+    try:
+        js = Path(__file__).resolve().parent / "static" / "app.js"
+        return f"{__version__}-{int(js.stat().st_mtime)}"
+    except Exception:
+        return __version__
+
+
 def create_app() -> FastAPI:
     settings = Settings.from_env()
     policy = load_policy(settings.policy_file)
@@ -81,6 +91,7 @@ def create_app() -> FastAPI:
     def page_context(request: Request, title: str) -> dict:
         return {
             "request": request,
+            "app_version": _static_version(),
             "title": title,
             "stats": store.stats(),
             "worker": service.status.snapshot(),

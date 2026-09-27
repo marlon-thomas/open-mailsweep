@@ -657,6 +657,14 @@ class StateStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def mark_message_gone(self, item_id: int, error: str = "message no longer exists at provider") -> None:
+        """Terminal state for queue items whose Gmail/Yahoo message was deleted."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE queue_items SET status='failed', error=?, updated_at=? WHERE id=? AND status IN ('discovered','classifying')",
+                (error[:2000], utcnow(), item_id),
+            )
+
     def list_all_pending(self) -> list[dict[str, Any]]:
         """Every unanswered Pending row, oldest first (classifier re-score sweep)."""
         with self._conn() as conn:

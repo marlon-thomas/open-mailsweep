@@ -7,7 +7,7 @@
     <tr id="rule-{{ rule.id }}">
       <td><span class="badge">{{ rule.scope_type }}</span></td>
       <td class="mono">{{ rule.scope_value }}</td>
-      <td><select class="rule-action" data-rule="{{ rule.id }}" data-original="{{ rule.action }}"><option value="keep" {% if rule.action=='keep' %}selected{% endif %}>Keep</option><option value="read_later" {% if rule.action=='read_later' %}selected{% endif %}>Read Later</option><option value="archive" {% if rule.action=='archive' %}selected{% endif %}>Archive</option><option value="trash" {% if rule.action=='trash' %}selected{% endif %}>Clean / Trash</option><option value="unsubscribe_trash" {% if rule.action=='unsubscribe_trash' %}selected{% endif %}>Unsubscribe + Clean</option></select></td>
+      <td><select class="rule-action" data-rule="{{ rule.id }}" data-original="{{ rule.action }}" onchange="saveRule(this.dataset.rule)"><option value="keep" {% if rule.action=='keep' %}selected{% endif %}>Keep</option><option value="read_later" {% if rule.action=='read_later' %}selected{% endif %}>Read Later</option><option value="archive" {% if rule.action=='archive' %}selected{% endif %}>Archive</option><option value="trash" {% if rule.action=='trash' %}selected{% endif %}>Clean / Trash</option><option value="unsubscribe_trash" {% if rule.action=='unsubscribe_trash' %}selected{% endif %}>Unsubscribe + Clean</option></select></td>
       <td>{{ rule.updated_at }}</td>
       <td class="actions"><button class="button small" onclick="saveRule({{ rule.id }})">Save</button><button class="button small danger" onclick="deleteRule({{ rule.id }})">Delete</button></td>
     </tr>

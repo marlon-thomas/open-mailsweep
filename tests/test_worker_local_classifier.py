@@ -334,3 +334,64 @@ def test_pending_reeval_survives_restart_via_startup_trigger(tmp_path: Path):
     assert item["status"] == "actionable"
     assert item["decision_source"] == "local-classifier-reeval"
     assert "startup" in (item["decision_reason"] or "")
+
+
+class GoneGmail:
+    """Body fetch raises like Gmail 404 / Yahoo LookupError for deleted messages."""
+    def __init__(self, exc):
+        self.exc = exc
+        self.trashed = []
+    def get_message(self, mid):
+        raise self.exc
+    def get_message_metadata(self, mid):
+        raise self.exc
+
+
+def _claim_pending_gone(service, mid="gone1"):
+    msg = promo_msg(mid, "old@deleted-mailing.com", "deleted-mailing.com")
+    item_id = service.store.add_discovered(msg, plan())
+    return item_id
+
+
+def test_gone_gmail_404_marks_failed_instead_of_requeuing(tmp_path: Path):
+    class FakeHttpError404(RuntimeError):
+        def __init__(self):
+            super().__init__(
+                "<HttpError 404 when requesting ... returned \"Requested entity was not found.\". "
+                "Details: \"[{'message': 'Requested entity was not found.', 'reason': 'notFound'}]\">"
+            )
+            self.resp = SimpleNamespace(status=404)
+
+    from types import SimpleNamespace
+
+    service = make_service(tmp_path)
+    train_from_senders(service)
+    http404 = FakeHttpError404()
+    item_id = _claim_pending_gone(service)
+    service._classifier_gmail = GoneGmail(http404)
+    claimed = service.store.claim_discovered_batch(16)
+    service._classify_claimed(claimed)
+
+    item = service.store.get_item(item_id)
+    assert item["status"] == "failed"
+    assert "not found" in (item["error"] or "").lower()
+
+
+def test_gone_yahoo_lookup_error_marks_failed(tmp_path: Path):
+    service = make_service(tmp_path)
+    train_from_senders(service)
+    item_id = _claim_pending_gone(service, mid="gone2")
+    service._classifier_gmail = GoneGmail(LookupError("message not found"))
+    claimed = service.store.claim_discovered_batch(16)
+    service._classify_claimed(claimed)
+    assert service.store.get_item(item_id)["status"] == "failed"
+
+
+def test_transient_fetch_error_still_requeues(tmp_path: Path):
+    service = make_service(tmp_path)
+    train_from_senders(service)
+    item_id = _claim_pending_gone(service, mid="gone3")
+    service._classifier_gmail = GoneGmail(ConnectionError("temporary network blip"))
+    claimed = service.store.claim_discovered_batch(16)
+    service._classify_claimed(claimed)
+    assert service.store.get_item(item_id)["status"] == "discovered"  # retried later

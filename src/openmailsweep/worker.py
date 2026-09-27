@@ -453,6 +453,14 @@ class OpenMailSweepService:
         self.status.update(local_classifier=self.local.public_state(), last_progress_at=_now())
 
     @staticmethod
+    def _is_permanent_message_missing(exc: Exception) -> bool:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status == 404:
+            return True
+        text = str(exc).lower()
+        return "requested entity was not found" in text or "notfound" in text
+
+    @staticmethod
     def _mixed_history(history: dict[str, int]) -> bool:
         labels = {
             key.split("hist_sender_", 1)[-1].split("hist_list_", 1)[-1]
@@ -1029,7 +1037,17 @@ class OpenMailSweepService:
                 self.report(f"[classifier] Gmail quota pause; returned batch to queue after item={item_id}")
                 time.sleep(2.0)
                 return
+            except LookupError as exc:
+                # Yahoo-style "message not found" is permanent.
+                self.store.mark_message_gone(item_id, f"provider message not found: {exc}"[:2000])
+                self.report(f"[classifier] item={item_id} no longer exists at provider; marked failed")
+                continue
             except Exception as exc:
+                if self._is_permanent_message_missing(exc):
+                    # Deleted at the provider: retrying forever only burns quota.
+                    self.store.mark_message_gone(item_id, f"provider message not found: {exc}"[:2000])
+                    self.report(f"[classifier] item={item_id} no longer exists at provider; marked failed")
+                    continue
                 # Put transient Gmail failures back into the intake/classifier
                 # backlog rather than turning them into a user decision.
                 self.store.return_to_discovered(item_id, f"Gmail body fetch failed: {exc}"[:2000])

@@ -1,3 +1,6 @@
+from threading import Thread
+import time as _time
+
 from types import SimpleNamespace
 
 from openmailsweep.gmail_client import GmailClient, GmailRateLimiter
@@ -34,6 +37,37 @@ def test_weighted_rate_limiter_paces_after_burst():
     assert fake.sleeps == [20.0]
     assert any(e.get("state") == "pacing" for e in events)
     assert events[-1]["state"] == "ready"
+
+
+def test_expensive_operation_cannot_starve_behind_small_calls():
+    """Regression: action workers used to stall indefinitely behind the
+    classifier's continuous 20/40-unit calls because sleep-and-recheck allowed
+    unlimited overtaking. FIFO tickets must guarantee a queued large call
+    completes before any later-arriving small call."""
+    limiter = GmailRateLimiter(units_per_minute=600, burst_units=40)  # 10 units/s
+    timeline: list[tuple[str, float]] = []
+
+    def big() -> None:
+        limiter.acquire(50, "messages.send(unsubscribe)")
+        timeline.append(("big", _time.monotonic()))
+
+    small_times: list[float] = []
+    start = _time.monotonic()
+    thread = Thread(target=big)
+    thread.start()
+    _time.sleep(0.05)  # ensure the big call holds the earlier ticket
+
+    for _ in range(20):
+        limiter.acquire(1, "messages.list")
+        small_times.append(_time.monotonic())
+    thread.join(timeout=15)
+
+    assert not thread.is_alive(), "expensive Gmail call starved behind small calls"
+    assert len(timeline) == 1
+    # Strict FIFO: the big call (earlier ticket) must have finished before any
+    # of the later small calls could return, and in bounded absolute time.
+    assert timeline[0][1] <= small_times[0]
+    assert timeline[0][1] - start < 6
 
 
 def test_rate_limit_error_detection_for_gmail_403():

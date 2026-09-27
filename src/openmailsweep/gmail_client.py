@@ -52,6 +52,14 @@ class GmailRateLimiter:
     The app has intake/classifier threads plus a configurable action-worker pool.
     A single limiter is therefore required: separate per-thread throttles can
     still collectively exceed Gmail's per-user/project quota.
+
+    Acquisitions are served in strict FIFO (ticket) order. The earlier
+    estimate-sleep-and-recheck design livelocked large operations: while a
+    100-unit ``messages.send`` slept for its estimate, an unbroken stream of
+    20/40-unit classifier and scanner calls kept draining the refilled tokens,
+    so the action pool could stall indefinitely behind the classifier backlog.
+    Tickets make overtaking impossible: a queued expensive call completes in a
+    bounded time regardless of small-call pressure.
     """
 
     def __init__(
@@ -74,6 +82,8 @@ class GmailRateLimiter:
         self._event = event_callback
         self._clock = clock
         self._sleep = sleeper
+        self._next_ticket = 0
+        self._turn = 0
 
     def _emit(self, **event: Any) -> None:
         if self._event is not None:
@@ -85,35 +95,44 @@ class GmailRateLimiter:
 
     def acquire(self, cost: int, operation: str) -> None:
         cost = max(1, int(cost))
-        waited = False
-        if cost > self.capacity:
-            # Allow unusually expensive future methods while preserving the
-            # configured refill rate.
-            with self._lock:
+        with self._lock:
+            if cost > self.capacity:
+                # Allow unusually expensive future methods while preserving the
+                # configured refill rate.
                 self.capacity = float(cost)
                 self._tokens = min(self._tokens, self.capacity)
+            ticket = self._next_ticket
+            self._next_ticket += 1
 
+        waited = False
         while True:
+            head = False
             with self._lock:
                 now = self._clock()
                 elapsed = max(0.0, now - self._updated)
                 self._updated = now
                 self._tokens = min(self.capacity, self._tokens + elapsed * self.rate_per_second)
-                if self._tokens >= cost:
-                    self._tokens -= cost
-                    if waited:
-                        self._emit(state="ready", operation=operation, wait_seconds=0.0, detail="Gmail API pacing complete")
-                    return
-                missing = cost - self._tokens
-                wait_seconds = max(0.01, missing / self.rate_per_second)
-
+                if ticket == self._turn:
+                    if self._tokens >= cost:
+                        self._tokens -= cost
+                        self._turn += 1
+                        if waited:
+                            self._emit(state="ready", operation=operation, wait_seconds=0.0, detail="Gmail API pacing complete")
+                        return
+                    missing = cost - self._tokens
+                    wait_seconds = max(0.01, missing / self.rate_per_second)
+                    head = True
+                else:
+                    # Someone earlier in line has priority; poll briefly.
+                    wait_seconds = 0.2
             waited = True
-            self._emit(
-                state="pacing",
-                operation=operation,
-                wait_seconds=wait_seconds,
-                detail=f"Local Gmail quota pacing ({self.units_per_minute} units/min)",
-            )
+            if head:
+                self._emit(
+                    state="pacing",
+                    operation=operation,
+                    wait_seconds=wait_seconds,
+                    detail=f"Local Gmail quota pacing ({self.units_per_minute} units/min)",
+                )
             self._sleep(wait_seconds)
 
 

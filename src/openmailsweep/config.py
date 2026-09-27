@@ -164,6 +164,8 @@ class Settings(BaseModel):
     local_trash_threshold: float = 0.95
     local_unsubscribe_threshold: float = 0.98
     local_early_confidence: float = 0.97
+    local_target_auto_precision: float = 0.97
+    local_calibrate_min_support: int = 6
     local_retrain_interval_hours: float = 6.0
     local_retrain_new_examples: int = 100
     local_retrain_on_rule_change: bool = True
@@ -242,6 +244,8 @@ class Settings(BaseModel):
             local_trash_threshold=_probability("LOCAL_CLEAN_THRESHOLD", 0.95),
             local_unsubscribe_threshold=_probability("LOCAL_UNSUBSCRIBE_THRESHOLD", 0.98),
             local_early_confidence=_probability("LOCAL_CLASSIFIER_EARLY_CONFIDENCE", 0.97),
+            local_target_auto_precision=_probability("LOCAL_CLASSIFIER_TARGET_PRECISION", 0.97),
+            local_calibrate_min_support=max(3, int(os.getenv("LOCAL_CLASSIFIER_CALIBRATE_MIN_SUPPORT", "6"))),
             local_retrain_interval_hours=_duration_hours("LOCAL_CLASSIFIER_RETRAIN_INTERVAL", 6.0),
             local_retrain_new_examples=max(
                 1, int(os.getenv("LOCAL_CLASSIFIER_RETRAIN_NEW_EXAMPLES", "100"))

@@ -34,7 +34,7 @@ from .training_data import TrainingExample
 ACTION_CLASSES = ["keep", "read_later", "archive", "trash", "unsubscribe_trash"]
 NON_DESTRUCTIVE_ACTIONS = {"keep", "read_later"}
 DESTRUCTIVE_ACTIONS = {"trash", "unsubscribe_trash"}
-MODEL_SCHEMA_VERSION = 1
+MODEL_SCHEMA_VERSION = 2
 FEATURE_SCHEMA_VERSION = 1
 HASH_FEATURES = 2**16
 
@@ -541,18 +541,27 @@ class LocalClassifier:
             "version": self.version,
             "metrics": metrics,
             "class_counts": metrics.get("class_counts", {}),
+            "calibrated_thresholds": metrics.get("calibrated_thresholds") or {},
+            "target_auto_precision": self.settings.local_target_auto_precision,
         }
         return metrics
 
     def _thresholds(self) -> dict[str, float]:
         s = self.settings
-        return {
+        base = {
             "keep": s.local_keep_threshold,
             "read_later": s.local_read_later_threshold,
             "archive": s.local_archive_threshold,
             "trash": s.local_trash_threshold,
             "unsubscribe_trash": s.local_unsubscribe_threshold,
         }
+        # Holdout-calibrated ceilings can only lower the configured values for
+        # destructive classes, never raise them.
+        calibrated = self.meta.get("calibrated_thresholds") or {}
+        for cls in DESTRUCTIVE_ACTIONS:
+            if cls in calibrated:
+                base[cls] = min(base[cls], float(calibrated[cls]))
+        return base
 
     def full_retrain(self, examples: list[TrainingExample], data_revision: str, reason: str) -> bool:
         """Periodic rebuild with atomic swap; the active model never degrades on failure."""
@@ -821,7 +830,47 @@ class LocalClassifier:
             ) if high_conf_idx else None,
             "high_confidence_coverage": round(len(high_conf_idx) / len(preds), 4),
             "eval_device": eval_backend.device,
+            "calibrated_thresholds": self._calibrate_destructive(preds, confs, truth, thresholds),
         }
+
+    def _calibrate_destructive(
+        self,
+        preds: list[str],
+        confs: np.ndarray,
+        truth: list[str],
+        configured: dict[str, float],
+    ) -> dict[str, float]:
+        """Pick evidence-based thresholds for destructive actions.
+
+        One-vs-rest log-loss sigmoids rarely reach 0.98 even when correct, so a
+        fixed near-1.0 gate means the classifier can never act on what it has
+        genuinely learned. Instead, for each destructive class we scan the
+        holdout predictions ascending by confidence and select the lowest
+        threshold whose measured precision meets ``local_target_auto_precision``
+        (with a minimum support count). Calibration may only *lower* a
+        configured ceiling, never raise it, and floors at 0.60. It requires a
+        holdout sample, so it can never authorise auto-cleaning from nothing.
+        """
+        calibrated: dict[str, float] = {}
+        target = min(1.0, max(0.5, self.settings.local_target_auto_precision))
+        min_support = self.settings.local_calibrate_min_support
+        for cls in DESTRUCTIVE_ACTIONS:
+            idx = [i for i, p in enumerate(preds) if p == cls]
+            if len(idx) < min_support:
+                continue
+            ordered = sorted(idx, key=lambda i: confs[i], reverse=True)
+            best: float | None = None
+            for k in range(min_support, len(ordered) + 1):
+                window = ordered[:k]
+                precision = sum(truth[i] == cls for i in window) / k
+                if precision >= target:
+                    best = float(confs[window[-1]])
+                else:
+                    break  # precision degrades as we widen; stop at first miss
+            if best is not None:
+                floor = 0.60 if cls == "trash" else 0.70
+                calibrated[cls] = round(min(configured.get(cls, 0.99), max(floor, best - 0.02)), 3)
+        return calibrated
 
     @staticmethod
     def _counts(y: list[str]) -> dict[str, int]:
@@ -844,6 +893,8 @@ class LocalClassifier:
                 "version": self.version,
                 "trained_at": self.meta.get("trained_at"),
                 "thresholds": thresholds,
+                "calibrated_thresholds": self.meta.get("calibrated_thresholds") or {},
+                "target_auto_precision": self.settings.local_target_auto_precision,
                 "metrics": self.meta.get("metrics") or {},
                 "class_counts": self.meta.get("class_counts") or {},
                 "min_examples": self.settings.local_min_examples,

@@ -41,7 +41,7 @@ function updateDashboard(d){
     setText('lc-accuracy',m.high_confidence_accuracy!=null?`${(m.high_confidence_accuracy*100).toFixed(1)}%`:(m.holdout?'0% coverage':'—'));
     setText('lc-accuracy-note',m.holdout?`holdout coverage ${m.high_confidence_coverage!=null?(m.high_confidence_coverage*100).toFixed(0)+'%':'—'} · accuracy ${m.accuracy!=null?(m.accuracy*100).toFixed(1)+'%':'—'}`:'holdout evaluation');
     setText('lc-auto-pending',`${lc.auto_actioned||0} / ${lc.pending||0}`);
-    setText('lc-corrections',`corrections: ${lc.corrections||0}`);
+    setText('lc-corrections',`corrections: ${lc.corrections||0} · gate trash ${(lc.thresholds||{}).trash??'—'} / unsub ${(lc.thresholds||{}).unsubscribe_trash??'—'} (holdout precision ${(((lc.target_auto_precision||0.97)*100).toFixed(0))}%)`);
     setText('lc-retrain',(lc.retrain_new_remaining!=null&&lc.retrain_new_remaining<=0)?'due now':`after ${lc.retrain_new_remaining??'—'} examples`);
     setText('lc-retrain-note',`or every ${lc.retrain_interval_hours||6} h; last: ${lc.trained_at||'—'}`);
   }

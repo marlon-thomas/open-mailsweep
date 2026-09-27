@@ -142,6 +142,19 @@ def training_set() -> list[TrainingExample]:
     ]
 
 
+def trash_example(mid: str, address: str, display: str, subject: str, snippet: str) -> TrainingExample:
+    return TrainingExample(
+        message_id=mid,
+        label="trash",
+        sender=f"{display} <{address}>",
+        sender_address=address,
+        subject=subject,
+        snippet=snippet,
+        list_id="",
+        features={"labels": []},
+    )
+
+
 @pytest.fixture()
 def classifier(tmp_path: Path) -> LocalClassifier:
     settings = local_settings(tmp_path)
@@ -299,3 +312,90 @@ def test_batch_prediction_matches_single(classifier: LocalClassifier):
     batch = classifier.predict_batch(examples)
     singles = [classifier.predict(ex) for ex in examples]
     assert [p.action for p in batch] == [p.action for p in singles]
+
+
+def big_training_set(per_class: int = 30) -> list[TrainingExample]:
+    import itertools
+
+    promo_subs = itertools.cycle([
+        ("Flash sale {n}% off everything shop now", "limited time offer save {n}% discount on all items"),
+        ("Weekly deals newsletter {n}% off", "unsubscribe manage preferences bulk promo discount code"),
+        ("Your exclusive promo offer inside today only", "shop now coupon code discount marketing sale"),
+    ])
+    personal_subs = itertools.cycle([
+        ("Re: dinner on Friday?", "hey are we still on for dinner friday let me know"),
+        ("Photos from the wedding", "here are the photos we took at the wedding last weekend"),
+        ("Fwd: project deadline next week", "can you review my draft before the meeting on tuesday"),
+    ])
+    junk_subs = itertools.cycle([
+        ("You have won a free iphone claim now", "click here claim your free prize winner congratulations urgent"),
+        ("Hot singles want to meet you tonight", "click here photos hot singles nearby message now free"),
+        ("Get rich quick with this one weird crypto trick", "click here limited spots free money fast riches guaranteed"),
+    ])
+    examples: list[TrainingExample] = []
+    for i in range(per_class):
+        s, sn = next(promo_subs)
+        examples.append(promo_example(f"p{i}", f"deals{i % 7}@brand{i}.com", f"Brand {i}", s.format(n=20 + i), sn.format(n=20 + i)))
+        s, sn = next(personal_subs)
+        examples.append(personal_example(f"k{i}", f"friend{i % 7}@person{i}.com", f"Pal {i}", s, sn))
+        s, sn = next(junk_subs)
+        examples.append(trash_example(f"t{i}", f"spam{i % 7}@junk{i}.biz", f"Junk {i}", s, sn))
+    return examples
+
+
+
+
+
+def test_holdout_calibration_lowers_destructive_gates(tmp_path: Path):
+    """Evidence, not guesswork: with a clean well-supported dataset the holdout
+    must lower the unsubscribe/trash ceilings so the model can act on patterns
+    it genuinely learned."""
+    from openmailsweep.models import UnsubscribePlan
+
+    settings = local_settings(
+        tmp_path,
+        local_min_examples=20,
+        local_auto_action_min_examples=40,
+        local_trash_threshold=0.95,
+        local_unsubscribe_threshold=0.98,
+    )
+    model = LocalClassifier(settings, Policy(), report=lambda _t: None)
+    model.bootstrap(big_training_set(), "rev-cal")
+
+    configured = {"trash": 0.95, "unsubscribe_trash": 0.98}
+    cal = model.meta["calibrated_thresholds"]
+    assert set(cal) <= set(configured)
+    assert any(value < configured[key] for key, value in cal.items()), cal
+    # Calibration may only lower ceilings, never raise them.
+    for key, value in cal.items():
+        assert value <= configured[key]
+
+    plan = UnsubscribePlan(
+        method="one_click", one_click=True, one_click_auto_eligible=True,
+        auto_eligible=True, reason="ok",
+    )
+    unseen = promo_example(
+        "hold1", "never@seen-before.co", "Unseen Brand",
+        "Flash sale 30% off everything shop now", "limited time offer save 30% discount on all items",
+    )
+    prediction = model.predict(unseen)
+    gate = model.gate(prediction, plan=plan)
+    assert gate.mode == "actionable"
+    assert gate.action == "unsubscribe_trash"
+
+
+def test_calibration_absent_keeps_conservative_gate(tmp_path: Path):
+    """A dataset too small to prove destructive precision must stay Pending."""
+    from openmailsweep.models import UnsubscribePlan
+
+    settings = local_settings(tmp_path, local_unsubscribe_threshold=0.98)
+    model = LocalClassifier(settings, Policy(), report=lambda _t: None)
+    model.bootstrap(training_set()[:8], "rev-tiny")  # 8 rows: no holdout metrics
+    assert not model.meta.get("calibrated_thresholds")
+    plan = UnsubscribePlan(
+        method="one_click", one_click=True, one_click_auto_eligible=True,
+        auto_eligible=True, reason="ok",
+    )
+    pred = model.predict(training_set()[0])
+    gate = model.gate(pred, plan=plan)
+    assert gate.mode == "pending"
